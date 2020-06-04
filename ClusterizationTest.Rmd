@@ -1,0 +1,410 @@
+---
+title: "2labtest"
+author: "Рева Дарья"
+date: '28 февраля 2018 г '
+output: 
+  html_document:
+     toc: TRUE
+     toc_depth: 6
+     toc_float: true
+     code_folding: hide
+---
+
+```{r setup, include = FALSE}
+options("scipen" = 10, degits = 7)
+knitr::opts_chunk$set(eval = TRUE, message = FALSE, warning = FALSE)
+
+#Необходимые библиотеки
+require(ggplot2)
+require(magrittr)
+require(cluster)
+library(dendextend)
+library(GGally) 
+```
+
+##Считывание файла. Подготовка к кластеризации
+```{r}
+Data_begin <- read.table(file = "Data.txt", header = T, row.names = 1)
+Data <- read.table(file = "Data.txt", header = T, row.names = 1)
+```
+
+Географические координаты городов на кластеризацию не влияют, поэтому удалим их из данных. 
+
+```{r}
+Data <- Data[,-c(11,10)]
+Data <- as.matrix(Data)
+```
+
+Для всех признаков, кроме трех, чем выше значение - тем лучше. Для признаков Housing и Crime - наоборот. Признак  Population - объективный признак, не имеющий интерпретации как “лучше-хуже”. Так как существуют разные шкалы оценивания, данные необходимо стандартизировать.
+
+```{r}
+Data <- scale(Data, center = TRUE, scale = apply(Data, 2, norm, type = "2"))
+```
+
+##Необходимые функции
+
+```{r}
+#Объединение нескольких графиков
+multiplot <- function (..., plotlist = NULL, file, cols = 1, layout = NULL) {
+  library(grid)
+  plots <- c(list(...), plotlist)
+  numPlots = length(plots)
+  if (is.null(layout)) {
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)), 
+      ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+  if (numPlots == 1) {
+    print(plots[[1]])
+  }
+  else {
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), 
+      ncol(layout))))
+    for (i in 1:numPlots) {
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row, 
+        layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+#Оптимальное количество кластеров в иерархической кластеризации
+N <- nrow(Data);
+clust_num<-function(f,g){
+ qplot(x = seq(N-1, 1, -1), 
+      y = f$height, 
+      geom = c("point", "line"),
+      xlab = "K clusters",
+      ylab = "Height",
+      xlim = c(0, g)
+      )
+}
+```
+
+##Иерархическая кластеризация
+
+Расстояния между объектами:
+<ul>
+<li>Расстояние Манхэттэнских кварталов
+<li>Евклидово расстояние
+<li>...
+</ul>
+Между кластерами:
+<ul>
+<li>Сomplete 
+<li>Single
+<li>Ward
+<li>...
+</ul>
+
+Найдем Евклидово расстояние и расстояние Манхэттенских кварталов:
+
+```{r}
+Eucdist <- dist(Data, method = "euclidian")
+Manhdist <- dist(Data, method = "manhattan")
+```
+
+Выполним кластеризацию различными методами с помощью Евклидового расстояния:
+
+```{r}
+hc_complete <- hclust(Eucdist, method = "complete")
+hc_single <- hclust(Eucdist, method = "single")
+hc_ward <- hclust(Eucdist, method = "ward.D2")
+```
+
+Выполним кластеризацию различными методами с помощью расстояния Манхэттенских кварталов:
+
+```{r}
+M_hc_complete <- hclust(Manhdist, method = "complete")
+M_hc_single <- hclust(Manhdist, method = "single")
+M_hc_ward <- hclust(Manhdist, method = "ward.D2")
+```
+
+```{r}
+clust_num(hc_complete, 100)
+```
+
+Расстояние начинает плавно убывать при переходе к 3 кластерам.
+
+```{r}
+clust_num(hc_single, 100)
+```
+
+Расстояние начинает плавно убывать при переходе к 2 кластерам.
+
+```{r}
+clust_num(hc_ward, 100)
+```
+
+Расстояние начинает плавно убывать при переходе к 3 кластерам.
+
+```{r}
+clust_num(M_hc_complete, 100)
+```
+
+Расстояние начинает плавно убывать при переходе к 4 кластерам.
+
+```{r}
+clust_num(M_hc_single, 100)
+```
+
+Расстояние начинает плавно убывать при переходе к 3 кластерам.
+
+```{r}
+clust_num(M_hc_ward, 100)
+```
+
+Расстояние начинает плавно убывать при переходе к 5 кластерам.
+
+<b>ИТОГ:</b>Свойство монотонности соблюдается при использовании всех методов. По графикам видно, что наиболее оптимальный вариант - комбинация евклидового расстояния и метода Варда. Делим на 3 кластера, так как график перестает резко убывать при переходе к 3 кластерам.
+
+```{r}
+hc_clusters <- cutree(hc_ward, k = 3)
+```
+
+```{r}
+#Визуализация
+Data_pca <- prcomp(Data) %$% 
+  x[ ,1:10] %>% 
+  as.data.frame %>%
+  cbind(.,
+        hc_clusters = factor(hc_clusters))
+
+ggplot(data = Data_pca,
+                 aes(x = PC1, 
+                     y = PC2,
+                     color = hc_clusters)) + 
+            geom_point() + 
+            ggtitle("Hierarchical")
+```
+
+##kmeans
+
+Выполним кластеризацию kmeans. Для этого определим оптимальное число кластеров методом каменистой осыпи.
+
+```{r}
+D <- 2:10 %>% 
+  sapply(function(x){cl <- kmeans(x = Data, 
+                                  centers = x,  
+                                  nstart = 100) 
+                     cl$tot.withinss})
+qplot(x = 2:10,
+      y = D,
+      geom = c("point", "line"),
+      xlab = "Number of clusters",
+      ylab = "Sum of square distance within clusters")
+```
+
+Из графика видно, что оптимальное число кластеров - 3 (так как в этой точке он перестает резко убывать).
+
+```{r}
+#Визуализация
+set.seed(100)
+Data_nstart_1 <- kmeans(x = Data, 
+                             centers = 3,
+                             nstart = 1,
+                             algorithm = c("Hartigan-Wong"))
+
+Data_nstart_10 <- kmeans(x = Data, 
+                              centers = 3, 
+                              nstart = 10,
+                              algorithm = c("Hartigan-Wong"))
+
+Data_nstart_100 <- kmeans(x = Data, 
+                                centers = 3, 
+                                nstart = 100,
+                                algorithm = c("Hartigan-Wong"))
+
+Data_pca <- Data %>% 
+  prcomp %$% 
+  x[ ,1:10] %>% 
+  as.data.frame %>% 
+  cbind(.,
+        Clusters_1 = factor(Data_nstart_1$cluster),
+        Clusters_10 = factor(Data_nstart_10$cluster),
+        Clusters_100 = factor(Data_nstart_100$cluster))
+
+multiplot(ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_1)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_nstart_1$cluster)]) + 
+            ggtitle("By Clusters 1 start"),
+          ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_10)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_nstart_10$cluster)]) + 
+            ggtitle("By Clusters 10 starts"),
+          ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_100)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_nstart_100$cluster)]) + 
+            ggtitle("By Clusters 100 starts"),
+          cols = 1)
+```
+
+Выше приведены результаты кластеризации kmeans с использованием различных количеств итераций. Разбиения повторились. То есть алгоритм нашел оптимальное разбиение с первой итерации.
+
+```{r}
+km_clusters <- kmeans(x = Data,
+                      centers = 3,
+                      nstart = 100)$cluster
+```
+
+##Partition around medoids. 
+
+Выполним кластеризацию kmeans. Для этого определим оптимальное число кластеров методом каменистой осыпи. Рассмотрим Евклидово расстояние и расстояние Манхэттенских кварталов.
+
+```{r}
+D <- 2:10 %>% 
+sapply(function(x)
+    {cl <- pam(x = Data,
+                               k = x,
+                               diss = FALSE,
+                               metric = "euclidean",
+                              stand = FALSE)
+                     cl$objective[2]})
+qplot(x = 2:10,
+      y = D,
+      geom = c("point", "line"),
+      xlab = "Number of clusters",
+      ylab = "Objective function")
+
+D <- 2:10 %>% 
+sapply(function(x)
+    {cl <- pam(x = Data,
+                               k = x,
+                               diss = FALSE,
+                               metric = "manhattan",
+                              stand = FALSE)
+                     cl$objective[2]})
+qplot(x = 2:10,
+      y = D,
+      geom = c("point", "line"),
+      xlab = "Number of clusters",
+      ylab = "Objective function")
+```
+
+Графики практически совпадают. Перегиб заметен при переходе к 3 кластерам, также как и в пунктах 1, 2.
+
+```{r}
+pam_clusters <- pam(x = Data,
+                    k = 3,
+                    diss = FALSE,
+                    metric = "euclidean",
+                    stand = FALSE)$clustering
+```
+
+```{r}
+#Визуализация
+Data_pca <- prcomp(Data) %$% 
+  x[ ,1:10] %>% 
+  as.data.frame %>%
+  cbind(.,
+        pam_clusters = factor(pam_clusters))
+
+ggplot(data = Data_pca,
+                 aes(x = PC1, 
+                     y = PC2,
+                     color = pam_clusters)) + 
+            geom_point() + 
+            ggtitle("PAM")
+```
+
+##Сравнение методов кластеризации
+
+Теперь мы можем сравнить результаты кластеризации разными методами.
+
+```{r}
+#PCA
+Data_pca <- prcomp(Data) %$% 
+  x[ ,1:2] %>% 
+  as.data.frame %>%
+  cbind(.,
+        hc_clusters = factor(hc_clusters),
+        km_clusters = factor(km_clusters),
+        pam_clusters = factor(pam_clusters))
+
+multiplot(ggplot(data = Data_pca,
+                 aes(x = PC1, 
+                     y = PC2,
+                     color = hc_clusters)) + 
+            geom_point() + 
+            ggtitle("Hierarchical"),
+          ggplot(data = Data_pca,
+                 aes(x = PC1, 
+                     y = PC2,
+                     color = km_clusters)) + 
+            geom_point() + 
+            ggtitle("K-means"),
+          ggplot(data = Data_pca,
+                 aes(x = PC1, 
+                     y = PC2,
+                     color = pam_clusters)) + 
+            geom_point() + 
+            ggtitle("PAM"), 
+          cols = 1)
+```
+
+Разбиения практически совпали. Однако в PCA часть информации теряется. Построим таблицы сопряженности:
+
+```{r}
+table(pam_clusters, km_clusters)
+table(pam_clusters, hc_clusters)
+table(km_clusters, hc_clusters)
+```
+
+Разбиения не совпали.
+
+##Интерпретация кластеризации
+```{r}
+#Hierarchy
+Data2 <- Data_begin[,-c(11,10)] 
+colnames(Data_begin) <- colnames(Data2) 
+
+clusters <- factor(hc_clusters) 
+
+ggpairs(data = Data2, 
+aes(colour = clusters), 
+diag = list(continuous = 'blankDiag'), 
+upper = list(continuous = 'blank')) 
+```
+
+```{r}
+#kmeans
+clusters <- factor(km_clusters) 
+
+ggpairs(data = Data2, 
+aes(colour = clusters), 
+diag = list(continuous = 'blankDiag'), 
+upper = list(continuous = 'blank')) 
+```
+```{r}
+#PAM
+clusters <- factor(pam_clusters) 
+
+ggpairs(data = Data2, 
+aes(colour = clusters), 
+diag = list(continuous = 'blankDiag'), 
+upper = list(continuous = 'blank')) 
+```
+
+
+3 кластера - подразделение городов на богатые, средние и бедные. В следующих признаках кластеры четко распределились по шкале от минимального к максимальному значению:
+<ul>
+<li> Housing Cost
+<li> Arts 
+<li> Population
+<li> Health Care
+</ul>
+Если интерпретировать буквально, то чем выше уровень жизни в городе, тем выше 
+<ul>
+<li>стоимость жилья
+<li>уровень медицины и культурного развития
+<li>количество населения
+</ul>

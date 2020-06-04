@@ -1,0 +1,345 @@
+---
+title: "Classification"
+author: "Рева Дарья"
+date: '23 марта 2018 г '
+output: 
+  html_document:
+     toc: TRUE
+     toc_depth: 6
+     toc_float: true
+     code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+options("scipen" = 10, degits = 7)
+knitr::opts_chunk$set(eval = TRUE, message = FALSE, warning = FALSE)
+
+#Необходимые библиотеки
+library(class)
+library(ggplot2)
+library(pROC)
+library(e1071)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+
+#Необходимые функции
+
+#определение оптимального количества соседей для стандартного knn
+opt_nn <- function(data, folds, k) {
+  n_folds <- max(folds)
+  acc <- numeric(n_folds)
+
+  for (i in 1:n_folds) {
+    
+    train_set <- data[folds != i, 2:11]
+    train_set_labels <- data[folds != i, 1]
+    test_set <- data[folds == i, 2:11]
+    test_set_labels <- data[folds == i, 1]
+    
+    knn_preds <- knn(train = data[folds != i, 2:11],
+                     test = data[folds == i, 2:11],
+                     cl = train_set_labels,
+                     k = k)
+
+    acc[i] <- sum(knn_preds == test_set_labels)/nrow(test_set)
+    
+    rm(train_set, test_set, knn_preds, train_set_labels, test_set_labels)
+    
+  }
+  
+  return(mean(acc))
+}
+```
+
+```{r}
+#Считывание файла
+data <- read.csv("cs_data_train.csv", header = T)
+data <- data[which(complete.cases(data)), ]
+```
+complete.cases() вызывает внутреннюю функцию, написанную на C специально для поиска пропущенных значений, поэтому работает значительно быстрее (чем na.omit() или is.na()). Если на вход подаётся матрица или таблица, функция возвращает логичекий вектор равный количеству строк, который показывает, содержит ли строка пропущещные значения.Также ожидаемым является ускорение при использовании which(), т.к. вектор из номеров строк обрабатывается быстрее логического вектора ,потому что числовой вектор имеет меньший размер.
+
+```{r}
+#Изменение распределения классов
+Data_pos <- data[data$SeriousDlqin2yrs == 1, ]
+Data_neg <- data[data$SeriousDlqin2yrs == 0, ]
+set.seed(45837379)
+neg_random_sample <- sample(1:nrow(Data_neg), 
+                                              3 * nrow(Data_pos))
+data <- rbind(Data_pos,
+                                Data_neg[neg_random_sample, ])  
+```
+
+```{r}
+#Стандартизация данных
+#data <- data[1:10000,] #короткий сет для тестов
+data_labels <- data[,1]
+kernel_data_labels <- levels(data_labels)
+data[,2:11] <- scale(data[,2:11], center = TRUE, scale = apply(data[,2:11], 2, norm, type = "2"))
+```
+
+##KNN
+
+Выберем оптимальное количество соседей k с помощью k-fold валидации:
+
+```{r}
+k <- seq(1, 20)
+N <- nrow(data)
+random_order <- sample(1:N, N)
+folds <- as.numeric(cut(1:N, breaks = 11))
+acc <- sapply(k, opt_nn, data = data, folds = folds)
+```
+
+Построим график, чтобы найти количество соседей, которое дает наибольшую точность:
+
+```{r}
+ggplot() + 
+  geom_point(aes(x = k, y = acc)) + 
+  geom_line(aes(x = k, y = acc)) + 
+  geom_vline(xintercept = which(acc == max(acc)), color = "red") + 
+  scale_x_continuous(breaks = seq(0,100,2))
+```
+
+k = 17 соседей - количество соседей, дающее максимальную точность.
+
+```{r}
+set.seed(64757) 
+
+data <- data[random_order, ]
+
+Train_set <- data[1:26743, ]
+Train_set_labels <- Train_set[,1]
+Test_set <- data[26744:33428, ]
+Test_set_labels <- Test_set[,1]
+
+knn_preds <- knn(train = Train_set[, 2:11], 
+                 test = Test_set[ ,2:11],  
+                 cl = Train_set_labels, 
+                 k = 17)
+```
+
+Посчитаем Precision, Recall, F1-score и Accuracy для knn:
+
+```{r}
+CM <- table(knn_preds, Test_set_labels)
+  
+knn_Precision <- CM[2, 2] / sum(CM[2, ])
+knn_Recall <- CM[2,2]/(CM[2,2] + CM[1,2])
+knn_F1 <- 2 * Precision * Recall / (Precision + Recall)
+knn_Accuracy <- (CM[2,2] + CM[1,1]) / sum(sum(CM))
+```
+
+```{r}
+knn_Precision
+knn_Recall
+knn_F1
+knn_Accuracy
+```
+
+##Логистическая регрессия
+
+```{r}
+set.seed(64757)
+
+Train_set <- data[1:floor(0.8 * N), ]
+Test_set <- data[(floor(0.8 * N) + 1):N, ]
+Test_set_labels <- Test_set[,1]
+
+lgr <- glm(formula = SeriousDlqin2yrs ~., 
+           data = Train_set,
+           family = binomial())
+  
+predictions <- predict(object = lgr, 
+                       newdata = Test_set,
+                       type = 'response')
+```
+
+Найдем такой порог, где F1 максимально:
+
+```{r}
+for(i in 5:9){
+  CM <- table(predictions > i*0.1, Test_set_labels)
+  
+  log_Precision <- CM[2, 2] / sum(CM[2, ])
+  log_Recall <- CM[2,2]/(CM[2,2] + CM[1,2])
+  F1[i-4] <- 2 * Precision * Recall / (Precision + Recall)
+  log_Accuracy <- (CM[2,2] + CM[1,1]) / sum(sum(CM))
+}
+```
+
+F1 принимает максимальное значение при пороге 0.5
+
+```{r}
+log_F1 <- max(F1)
+log_F1
+```
+
+Построим ROC-кривую:
+
+```{r}
+a <- roc(Test_set_labels,
+         predictions)
+
+ggplot() + 
+  geom_point(aes(x = rev(1 - a$specificities), 
+                 y = rev(a$sensitivities))) + 
+  geom_line(aes(x = rev(1 - a$specificities), 
+                 y = rev(a$sensitivities))) + 
+  geom_line(aes(x = c(0, 1), 
+                y = c(0, 1)),
+            color = "red") + 
+  xlab("FPR") + 
+  ylab("TPR")
+```
+
+Найдем площадь под кривой:
+
+```{r}
+{
+  print(a$auc)
+}
+```
+
+##SVM
+
+tune.svm создает переменную, которая хранит в себе оптимальные параметры для ядер.<br>
+$degree = 3$<br>
+$gamma = 0.1$<br>
+$coef0 = 0$
+
+```{r}
+parameters_svm <- tune.svm(SeriousDlqin2yrs ~.,
+                 data = Train_set)
+```
+
+Проверим все ядра и найдем то, которое дает наибольшие F1 и точность:
+
+```{r}
+svm_model_1 <- svm(SeriousDlqin2yrs ~.,
+                 data = Train_set,
+                 kernel = "linear", 
+                 degree = 3)
+
+predictions <- predict(object = svm_model_1, 
+                       newdata = Test_set,
+                       type = 'response')
+
+CM <- table(predictions, Test_set_labels)
+
+Precision <- CM[2, 2] / sum(CM[2, ])
+Recall <- CM[2,2]/(CM[2,2] + CM[1,2])
+F1 <- 2 * Precision * Recall / (Precision + Recall)
+Accuracy <- (CM[2,2] + CM[1,1]) / sum(sum(CM))
+```
+
+```{r}
+kernel_svm_accuracy <- seq(1:4)
+kernel_svm_F1 <- seq(1:4)
+kernel_svm_F1[1] <- F1
+kernel_svm_accuracy[1] <- Accuracy
+```
+
+```{r}
+svm_model_2 <- svm(SeriousDlqin2yrs ~.,
+                 data = Train_set,
+                 kernel = "polynomial", 
+                 degree = 3,
+                 gamma = 0.1,
+                 coef0 = 0)
+
+predictions <- predict(object = svm_model_2, 
+                       newdata = Test_set,
+                       type = 'response')
+
+CM <- table(predictions, Test_set_labels)
+
+Precision <- CM[2, 2] / sum(CM[2, ])
+Recall <- CM[2,2]/(CM[2,2] + CM[1,2])
+F1 <- 2 * Precision * Recall / (Precision + Recall)
+Accuracy <- (CM[2,2] + CM[1,1]) / sum(sum(CM))
+kernel_svm_F1[2] <- F1
+kernel_svm_accuracy[2] <- Accuracy
+```
+
+```{r}
+svm_model_3 <- svm(SeriousDlqin2yrs ~.,
+                data = Train_set,
+                 kernel = "radial", 
+                 degree = 3,
+                 gamma = 0.1)
+
+predictions <- predict(object = svm_model_3, 
+                       newdata = Test_set,
+                       type = 'response')
+
+CM <- table(predictions, Test_set_labels)
+
+Precision <- CM[2, 2] / sum(CM[2, ])
+Recall <- CM[2,2]/(CM[2,2] + CM[1,2])
+F1 <- 2 * Precision * Recall / (Precision + Recall)
+Accuracy <- (CM[2,2] + CM[1,1]) / sum(sum(CM))
+kernel_svm_F1[3] <- F1
+kernel_svm_accuracy[3] <- Accuracy
+```
+
+```{r}
+svm_model_4 <- svm(SeriousDlqin2yrs ~.,
+                 data = Train_set,
+                 kernel = "sigmoid", 
+                 degree = 3,
+                 gamma = 0.1,
+                 coef0 = 0)
+
+predictions <- predict(object = svm_model_4, 
+                       newdata = Test_set,
+                       type = 'response')
+
+CM <- table(predictions, Test_set_labels)
+
+Precision <- CM[2, 2] / sum(CM[2, ])
+Recall <- CM[2,2]/(CM[2,2] + CM[1,2])
+F1 <- 2 * Precision * Recall / (Precision + Recall)
+Accuracy <- (CM[2,2] + CM[1,1]) / sum(sum(CM))
+kernel_svm_F1[4] <- F1
+kernel_svm_accuracy[4] <- Accuracy
+```
+
+```{r}
+kernel_svm_accuracy
+kernel_svm_F1
+```
+
+##Дерево решений
+
+```{r}
+fit <- rpart(SeriousDlqin2yrs ~.,
+               data=Train_set,
+               method="class",
+               control=rpart.control(minsplit = 100,
+                                   minbucket = 100,
+                                   maxdepth = 3, 
+                                   cp = 0))
+
+fancyRpartPlot(fit)
+
+predictions <- predict(object = fit, 
+                       newdata = Test_set,
+                       type = 'class')
+
+CM <- table(predictions, Test_set_labels)
+
+tree_Precision <- CM[2, 2] / sum(CM[2, ])
+tree_Recall <- CM[2,2]/(CM[2,2] + CM[1,2])
+tree_F1 <- 2 * Precision * Recall / (Precision + Recall)
+tree_Accuracy <- (CM[2,2] + CM[1,1]) / sum(sum(CM))
+```
+
+```{r}
+tree_Precision
+tree_Recall
+tree_F1
+tree_Accuracy
+```

@@ -1,0 +1,342 @@
+---
+title: "2lab"
+author: "Рева Дарья"
+date: '25 февраля 2018 г '
+output: 
+  html_document:
+     toc: TRUE
+     toc_depth: 6
+     toc_float: true
+---
+
+```{r setup, include = FALSE}
+options("scipen" = 10, degits = 7)
+knitr::opts_chunk$set(eval = TRUE, message = FALSE, warning = FALSE)
+require(ggplot2)
+require(magrittr)
+library(dendextend)
+
+multiplot <- function (..., plotlist = NULL, file, cols = 1, layout = NULL) {
+  library(grid)
+  plots <- c(list(...), plotlist)
+  numPlots = length(plots)
+  if (is.null(layout)) {
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)), 
+      ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+  if (numPlots == 1) {
+    print(plots[[1]])
+  }
+  else {
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), 
+      ncol(layout))))
+    for (i in 1:numPlots) {
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row, 
+        layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+##Считывание файла. Подготовка к кластеризации
+```{r}
+Data <- read.table(file = "Data.txt")
+```
+Географические координаты городов на кластеризацию не влияют, поэтому удалим их из данных. Названия городов и столбцов - нечисловые значения, их тоже можно удалить из данных.
+```{r}
+Data_labels <- Data$V1
+Data$V11 <- NULL
+Data$V12 <- NULL
+Data$V1 <- NULL
+Data <- Data[-1,]
+Data$V2 <- as.numeric(Data$V2)
+Data$V3 <- as.numeric(Data$V3) 
+Data$V4 <- as.numeric(Data$V4) 
+Data$V5 <- as.numeric(Data$V5) 
+Data$V6 <- as.numeric(Data$V6) 
+Data$V7 <- as.numeric(Data$V7) 
+Data$V8 <- as.numeric(Data$V8) 
+Data$V9 <- as.numeric(Data$V9) 
+Data$V10 <- as.numeric(Data$V10) 
+Data$V13 <- as.numeric(Data$V13) 
+```
+Для всех признаков, кроме трех, чем выше значение - тем лучше. Для признаков Housing и Crime - наоборот. Признак  Population - объективный признак, не имеющий интерпретации как “лучше-хуже”. Так как существуют разные шкалы оценивания, данные необходимо стандартизировать.
+```{r}
+Data <- scale(Data, center = TRUE, scale = apply(Data, 2, norm, type = "2"))
+```
+
+##Задание 1. Иерархическая кластеризация
+
+Расстояния между объектами:
+<ul>
+<li>Евклидово расстояние
+<li>Расстояние Чебышева
+<li>Косинусное расстояние
+</ul>
+Между кластерами:
+<ul>
+<li>Сomplete (дальнего соседа)
+<li>Single (ближнего соседа)
+<li>Centroid (UPGMC)
+</ul>
+
+```{r}
+## Матрица Евклидовых расстояний между объектами
+Euclid_distance <- dist(Data, method = "euclidian")
+N <- nrow(Data)
+
+## Матрица расстояний Манх. кв.
+Manh_distance <- dist(Data, method = "manhattan")
+
+## Матрица расстояний Чебышева между объектами
+Cheb_distance <- dist(Data, method = "maximum")
+
+## Косинусное расстояние между объектами
+Cosine_distance <- function(x, y) {
+  return(1 - sum(x * y)/sqrt(sum(x^2) * sum(y^2)))
+}
+pairs <- combn(1:nrow(Data), 2)
+D <- matrix(NA, nrow = nrow(Data), ncol = nrow(Data))
+D[lower.tri(D)] <- apply(pairs, 2, function(x) {
+  Cosine_distance(Data[x[1], ], Data[x[2], ])
+})
+
+Cosine_distance <- as.dist(D)
+```
+
+```{r}
+## Кластеризация различными методами с расстояниями Манхэттанских кварталов
+## Метод дальнего соседа
+Data_hc_complete <- hclust(Manh_distance, method = "complete")
+Data_hc_complete$labels <- as.character(Data_labels[Data_hc_complete$order])
+
+## Метод ближнего соседа
+Data_hc_single <- hclust(Manh_distance, method = "single")
+Data_hc_single$labels <- Data_labels[Data_hc_single$order]
+
+## Метод Centroid
+Data_hc_centroid <- hclust(Manh_distance, method = "centroid")
+Data_hc_centroid$labels <- Data_labels[Data_hc_centroid$order]
+
+## Разделение на 3 кластера
+Data_clusters_3 <- cutree (Data_hc_single, k = 3)
+##Разделение на 4 кластера
+Data_clusters_4 <- cutree(Data_hc_single, k = 4)
+##Разделение на 4 кластера
+Data_clusters_7 <- cutree(Data_hc_single, k = 7)
+
+Data_pca <- Data %>%
+prcomp %$%
+x[ ,1:10]%>%
+as.data.frame %>%
+cbind(.,
+Clusters_7 = factor(Data_clusters_7),
+Clusters_3 = factor(Data_clusters_3),
+Clusters_4 = factor(Data_clusters_4))
+
+multiplot(p3 <- ggplot(data = Data_pca,
+                       aes(x = PC1,
+                          y = PC2,
+                       color = Clusters_7))+
+geom_point()+
+scale_color_manual(values = c('red','green', 'blue', 'darkorange', 'pink', 'yellow', 'purple'))+
+ggtitle("By 7 Clusters"),
+
+  p1 <- ggplot(data = Data_pca,
+                       aes(x = PC1,
+                          y = PC2,
+                       color = Clusters_3))+
+geom_point()+
+scale_color_manual(values = c('red', 'blue', 'green'))+
+ggtitle("By 3 Clusters"),
+
+p2 <- ggplot(data = Data_pca,
+aes(x = PC1,
+y = PC2,
+color = Clusters_4))+
+geom_point()+
+scale_color_manual(values = c('red', 'slateblue2', 'green', 'darkorange'))+
+ggtitle("By 4 Clusters"),
+cols =1)
+```
+
+```{r}
+## Кластеризация различными методами с Евклидовыми расстояниями
+## Метод дальнего соседа
+Data_hc_complete <- hclust(Euclid_distance, method = "complete")
+Data_hc_complete$labels <- as.character(Data_labels[Data_hc_complete$order])
+
+## Метод ближнего соседа
+Data_hc_single <- hclust(Euclid_distance, method = "single")
+Data_hc_single$labels <- Data_labels[Data_hc_single$order]
+
+## Метод Centroid
+Data_hc_centroid <- hclust(Euclid_distance, method = "centroid")
+Data_hc_centroid$labels <- Data_labels[Data_hc_centroid$order]
+
+multiplot(qplot(x = seq(N-1, 1, -1), 
+                y = Data_hc_complete$height, 
+                geom = c("point", "line"),
+                xlab = "K clusters",
+                ylab = "Height"),
+          qplot(x = seq(N-1, 1, -1), 
+                y = Data_hc_single$height, 
+                geom = c("point", "line"),
+                xlab = "K clusters",
+                ylab = "Height"), 
+          qplot(x = seq(N-1, 1, -1), 
+                y = Data_hc_centroid$height, 
+                geom = c("point", "line"),
+                xlab = "K clusters",
+                ylab = "Height"))
+
+## Разделение на 2 кластера
+Data_clusters_2 <- cutree (Data_hc_single, k =2)
+## Разделение на 3 кластера
+Data_clusters_3 <- cutree (Data_hc_single, k =3)
+##Разделение на 4 кластера
+Data_clusters_4 <- cutree(Data_hc_single, k=4)
+
+
+Data_pca <- Data %>%
+prcomp %$%
+x[ ,1:10]%>%
+as.data.frame %>%
+cbind(.,
+Clusters_2 = factor(Data_clusters_2),
+Clusters_3 = factor(Data_clusters_3),
+Clusters_4 = factor(Data_clusters_4))
+
+multiplot(p3 <- ggplot(data = Data_pca,
+                       aes(x = PC1,
+                          y = PC2,
+                       color = Clusters_2))+
+geom_point()+
+scale_color_manual(values = c('red','green'))+
+ggtitle("By 2 Clusters"),
+
+  p1 <- ggplot(data = Data_pca,
+                       aes(x = PC1,
+                          y = PC2,
+                       color = Clusters_3))+
+geom_point()+
+scale_color_manual(values = c('red', 'blue', 'green'))+
+ggtitle("By 3 Clusters"),
+
+p2 <- ggplot(data = Data_pca,
+aes(x = PC1,
+y = PC2,
+color = Clusters_4))+
+geom_point()+
+scale_color_manual(values = c('red', 'slateblue2', 'green', 'darkorange'))+
+ggtitle("By 4 Clusters"),
+cols =1)
+```
+
+##Задание 2. kmeans
+
+```{r}
+
+Data_clust <- kmeans(x = Data, 
+                     centers = 3, 
+                     iter.max = 100, 
+                     nstart = 100,
+                     algorithm = c("Hartigan-Wong"))
+
+set.seed(100)
+Data_nstart_1 <- kmeans(x = Data, 
+                             centers = 3,
+                             nstart = 1,
+                             algorithm = c("Hartigan-Wong"))
+
+Data_nstart_10 <- kmeans(x = Data, 
+                              centers = 3, 
+                              nstart = 10,
+                              algorithm = c("Hartigan-Wong"))
+
+Data_nstart_100 <- kmeans(x = Data, 
+                                centers = 3, 
+                                nstart = 100,
+                                algorithm = c("Hartigan-Wong"))
+
+Data_pca <- Data %>% 
+  prcomp %$% 
+  x[ ,1:10] %>% 
+  as.data.frame %>% 
+  cbind(.,
+        Clusters_1 = factor(Data_nstart_1$cluster),
+        Clusters_10 = factor(Data_nstart_10$cluster),
+        Clusters_100 = factor(Data_nstart_100$cluster))
+
+multiplot(ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_1)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_nstart_1$cluster)]) + 
+            ggtitle("By Clusters 1 start"),
+          ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_10)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_nstart_10$cluster)]) + 
+            ggtitle("By Clusters 10 starts"),
+          ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_100)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_nstart_100$cluster)]) + 
+            ggtitle("By Clusters 100 starts"),
+          cols = 1)
+
+```
+
+##Задание 3. Partitioning around medoids
+
+```{r}
+require(cluster)
+
+Data_pam <- pam(x = Data,
+                k = 3,
+                diss = FALSE,
+                metric = "euclidean",
+                stand = TRUE)
+#str(Data_pam)
+
+#table(Data_pam$clustering, Data_labels)
+
+Data_pca <- Data %>% 
+  prcomp %$% 
+  x[ ,1:10] %>% 
+  as.data.frame %>% 
+  cbind(.,
+        Clusters_pam = factor(Data_pam$clustering),
+        Clusters_kmeans = factor(Data_clust$cluster))
+
+multiplot(ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_pam)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_pam$clustering)]) + 
+            ggtitle("By Clusters PAM"),
+          ggplot(data = Data_pca, 
+                 aes(x = PC1, 
+                     y = PC2, 
+                     color = Clusters_kmeans)) + 
+            geom_point() + 
+            scale_color_manual(values = c('red', 'green',  'blue')[unique(Data_clust$cluster)]) + 
+            ggtitle("By Clusters K-Means"),
+          cols = 1)
+
+
+```
+
+##Задание 4. Сравнение результатов
+
+##Задание 5. Визуализация и интерпретация кластеризации
+
